@@ -1,0 +1,124 @@
+---
+title: "Regression Project Chapter 2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1 Scatterplots & Analysis
+Show a scatterplot of y vs x
+
+
+```{r, echo =TRUE}
+library(readr)
+library(ggplot2)
+library(MASS)
+library(car)
+library(ggalt)
+library(e1071)
+
+#set seed to 1 to have reproducible results for notebook
+set.seed(1)
+
+df <- read_csv("~/regression/NewYorkCityPropertySales.csv")
+df = df[c('sale_price', 'gross_square_feet')]
+df = df[complete.cases(df),]
+df = df[df$sale_price & df$gross_square_feet <1500000000,]
+y = df$sale_price
+x = df$gross_square_feet
+```
+
+We print a scatterplot for EDA of "Gross Square Feed" against "Sale Price". We expect a linear relationship between the two variables so an lmplot can also be added to evaluate.
+```{r, echo= TRUE}
+ggplot(df,aes(x,y))  + 
+  geom_smooth(method='lm',formula=y~x, col = 'lightblue')+ geom_point(col='lightgreen')
+```
+
+It is obvious that there are issues visualizing the data but an attempt at using ggplot to encircle x (in red) and y (in purple) values that are greater than 10 standard deviation's away from mean can be observed below. Those points are potential outliers with red circled as potential leverage points(seperated from center of x datapoints). 
+```{r, echo = TRUE}
+ggplot(df,aes(x,y))  + 
+  geom_smooth(method='lm',formula=y~x, col = 'lightblue')+ geom_point(col='lightgreen')+ 
+  geom_encircle(aes(gross_square_feet, sale_price), data = df[x > (mean(x) + sd(x)*10),], color="red", size=1) +geom_encircle(aes(gross_square_feet, sale_price), data = df[y > (mean(y) + sd(y)*10),], color="purple", size=1)
+  
+ggplot(df,aes(x,y)) + geom_violin()
+```
+Given the spread of the data, it becomes difficult to evaluate exact measures of outliers, influential points, skew,
+and kurtosis from visualization. We can employ R's skewness and kurtosis to return results regarding distribution of data. We see below that both x and y variables are heavily right skewed (not surprising given nature of dataset). We also see high kurtosis which indicates many x and y values fall close to x-bar, y-bar. Removing outlier points becomes necessary for understanding better the data but also to ensure our model isn't negatively effected by the extreme values.
+```{r, echo=TRUE}
+skewness(x)
+kurtosis(x)
+skewness(y)
+kurtosis(y)
+```
+
+## 2 Regression Influence Plots
+
+A more sophisticated method of identifying leverage and influence is using R's influencePlot and Cook's distance. We fit a simple linear regression model and evaluate leverage and influence on it.
+
+```{r, echo=TRUE}
+model_ = lm(y~x)
+summary(model_)
+influencePlot(model_)
+```
+
+The influence plot returns data from our model where size of circle denotes cook's distance. We see that some data points have large residuals but they have low hat-values (they are low leverage but still large influence). In laymen terms, they are close to the center of the xpoints but far from y and pull the regression line towards it. These are candidates for removal. Samples 166 and 9633 have both large cook's distance and large so they are also candidates for removal. Finally, some points are interesting in that they have high hat value yet low Cook's distance and falls within two standard deviation of residuals. These are likely points that has high leverage but falls near the line. It is safe to remove this point for visualization as it will have no effect on our model (past our ability to extrapolate beyond the range of the data).
+
+We remove the points suggested above and fit a BoxCox transformation on residuals to find a lambda value that is optimal for transformation of y.
+
+```{r, echo=TRUE}
+new_df = df[-c(166, 9633),]
+boxcox(model_)
+boxcox(model_)$x[which.max(boxcox(model_)$y)]
+```
+
+The value is .222 which means we are looking for something between a logtransform (which a lambda of 0 would give) and square root transformation (which a lambda of .5 would give). Since there are no "simple" solutions, we instead would apply a box cox transformation with lambda = .22. The transformation will be completed as follows:
+
+BC_X = (X^lambda-1)/lambda
+
+Where X = series, BC_x = transformed series.
+
+## 3 Interpretation of Simple Linear Regression Model
+
+a) Our current model Y = 115800 + 378.8x1 for Y value conditional on X
+b) Our y-bar or E(Y) is the summation of all estimates from our model divided by number of samples
+c) Our Var(Y) is the summation of all estimates minus y-bar divided by number of samples
+
+## 4 R output
+```{r, echo=TRUE}
+new_df$bc_sale_price <- (new_df$sale_price^.22 -1)/.22
+x <- new_df$gross_square_feet
+y <- new_df$bc_sale_price
+
+ggplot(new_df,aes(x,y))  + 
+  geom_smooth(method='lm',formula=y~x, col = 'lightblue')+ geom_point(col='lightgreen')
+model2 <- lm(y~x)
+summary(model2)
+plot(model2)
+```
+
+## 5 Analysis of Output
+
+We see that our t-statistic is 53.04 for b1. We disregard the value for the intercept as the intercept is "nuisance" variable. The t-statistic gives evidence to reject the null hypothesis that b1 is 0, in order words, has no predictive power on our response. Our hypothesis for the t-test in regards to a regression model is that a parent population of from which our sample population of b1 draws is different than our parent population of b0 where our current sample is drawn from. In effect, this is stating that our model is extremely unlikely to be the same as a model that predicts purely the intercept. Our R^2 goes down drastically due to our transformation of Y. This is not surprisingly as we "squeezed" the y values to a smaller range around a line and that line may well be close to flat. Further testing would be required such as ANOVA, cross validation, etc on whether this model is "better".
+
+```{r, echo=TRUE}
+conf.band = predict(model2, new_df, interval = "confidence")
+pred.band = predict(model2, new_df, interval = "prediction")
+
+plot(x,y, xlab = "Gross Square Feet", ylab = "Squared Sales Price",
+     main = "LM plot with confidence/prediction intervals")
+abline(model2, lty = 2) #Plotting the regression line.
+
+lines(x, conf.band[, 2], col = "blue") #Plotting the lower confidence band.
+lines(x, conf.band[, 3], col = "blue") #Plotting the upper confidence band.
+lines(x, pred.band[, 2], col = "red") #Plotting the lower prediction band.
+lines(x, pred.band[, 3], col = "red") #Plotting the upper prediction band.
+
+#legend
+legend("topleft", c("Regression Line", "Conf. Band", "Pred. Band"),
+       lty = c(2, 1, 1), col = c("black", "blue", "red"))
+
+```
+
+Our confidence interval is our 95% confidence interval for y-bar (mean of y-hat from given samples of x) whereas our our prediction interval is our 95% confidence interval for a single value of y (y-hay from given samples of x).
